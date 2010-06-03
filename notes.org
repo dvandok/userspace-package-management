@@ -1,0 +1,31 @@
+* User space package management
+
+  The PoC (Proof of Concept / Packages of Choice) has always been a centrally provided collection of
+  packages for end users. The alternative--user space package management-- allows the VO software
+  managers to handle VO specific software installations per site, thus gaining control over versions
+  and build parameters.
+
+  The pkgsrc system, by NetBSD, is being tried as the basic packaging toolset for managing updates,
+  dependencies, etc.
+
+  Not all science software is readily available in pkgsrc, but with some work any regular package
+  that follows the usual configure/make/make install mantra can be incorporated.
+
+  Extra tooling around pkgsrc is needed to interact with Grid systems, because software management
+  is done by sending grid jobs with a software manager proxy (to gain the appropriate user mapping),
+  and all packaging/updating/etc work needs to be done inside the grid job.
+
+** Grid jobs
+
+   The general layout of the grid jobs is as follows:
+
+   - test if we have the right permissions in the VO_SW_AREA (and set umask 002)
+
+   - test for the presence of pkgsrc
+     - if not present: fetch and install
+     - if present: upgrade if necessary
+
+   - run the vulnerability admin tool
+
+   - see to the actual request (install, remove, etc.)
+
