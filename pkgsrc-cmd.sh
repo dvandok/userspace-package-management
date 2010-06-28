@@ -8,6 +8,10 @@ umask 002
 # This is the location to fetch pkgsrc.tar.gz from. It's a fast mirror.
 pkgsrc_url=ftp://ftp.nl.netbsd.org/pub/NetBSD/packages/pkgsrc.tar.gz
 
+
+# bunch stdout and stderr together
+exec 2>&1
+
 # Parse the command-line options. Right now only two options are supported:
 # -u update the pkgsrc instance (which is normally skipped because it could take a long time)
 # -h print help
@@ -41,7 +45,7 @@ update=0
 vo=
 printhelp=0
 debugging=0
-while getopts uhv: opt; do
+while getopts udhv: opt; do
     case $opt in
 	u)
 	    update=1
@@ -51,7 +55,7 @@ while getopts uhv: opt; do
 	h) printhelp
 	    exit 0;
 	    ;;
-	d debugging=1 ;;
+	d) debugging=1 ;;
 	?) printhelp
 	    exit 1;
 	    ;;
@@ -64,9 +68,15 @@ debug() {
     test $debugging -eq 1 && echo debug: "$@" >&2
 }
 
+# the log function prints output with a timestamp
+log() {
+    ts=`date "+%b %e %H:%M:%S %Z"`
+    echo "$ts $@"
+}
+
 # A similar function to produce an error message and exit
 error() {
-    echo "ERROR: $@" >&2
+    log "ERROR: $@"
     exit 1
 }
 
@@ -82,6 +92,7 @@ else
     debug "VO set on command line: '$vo'"
 fi
 
+log "Started pkgsrc-cmd.sh. VO=$vo, debugging=$debugging"
 
 # We need an indirection to set the directory of the VO specific software area
 vo_sw_dir_var=VO_`echo $vo | tr a-z. A-Z.`_SW_DIR
@@ -93,21 +104,58 @@ debug "set vo_sw_dir to $vo_sw_dir"
 PKGSRC_LOCATION=$vo_sw_dir/pkgsrc
 PKG_PREFIX=$vo_sw_dir/pkg
 PATH=$PKG_PREFIX/bin:$PKG_PREFIX/sbin:$PATH
-export PATH
+export PATH PKG_PREFIX PKGSRC_LOCATION
 
 debug "PATH set to: $PATH"
 
 # This sanity check makes sure we are allowed to write to the software area.
-# This check should move to cover only the activities that really mean to write
-# things, such as install or update.
-check_writable_sw_area() {
+# This check should be done before init, install, delete or any other operation
+# that writes data, but not for operations that only read data.
+# Also, we need to prevent simultaneous conflicting write operations, so we set
+# a lock file at this point. We should remove the lockfile at the end, but
+# if that fails we'll check whether it has become 'stale', which means older than
+# half an hour.
+get_write_lock() {
+    log "Checking if the vo software area is writable."
     if [ -z $vo_sw_dir ] ; then
 	error "\$$vo_sw_dir_var not set."
     fi
 
     if [ ! -w $vo_sw_dir ] ; then
-	error "\$$vo_sw_dir_var ($vo_sw_dir) is not writable, check your proxy (are you the VO software manager?)." 
+	error "\$$vo_sw_dir_var ($vo_sw_dir) is not writable. (Check your proxy: are you the VO software manager?)" 
     fi
+    log "$vo_sw_dir writable OK."
+    # now do the lockfile shuffle
+    lockfile=$vo_sw_dir/pkgsrc-lock
+    log "checking lockfile $lockfile"
+    if [ -f $lockfile ]; then
+	log "lockfile exists."
+	ls -l $lockfile
+	if [ -z `find $lockfile -cmin -30` ]; then
+	    log "stale lockfile ($lockfile is older than 30 minutes)"
+	    rm -f $lockfile || error "could not remove $lockfile. Call help."
+	else
+	    log "lockfile is still fresh."
+	    return 1
+	fi
+    else
+	log "no lockfile found. Setting lock"
+    fi
+    # At this point, we've concluded we should try and set the lockfile.
+    # be careful to avoid race conditions (although rare).
+    log "attempting to get lock."
+    a=`mktemp $vo_sw_dir/pkgsrc-lock.XXXXXXXXXX` || error "mktemp failed"
+    ln $a $lockfile
+    if [ $? -ne 0 ]; then
+	log "failed to obtain lock"
+	rm $a
+	return 1
+    fi
+    log "lock set"
+    rm $a
+    unset a
+    trap "rm -f $lockfile" INT TERM EXIT
+    return 0
 }
 
 check_installation() {
@@ -115,15 +163,25 @@ check_installation() {
     if [ ! -d $PKGSRC_LOCATION ]; then
 	error "pkgsrc seems not to be installed; run <init> first."
     fi
-    return 0
+    for i in pkg_admin pkg_create pkg_info ; do
+	if [ ! -x $PKG_PREFIX/sbin/$i ]; then
+	    error "$PKG_PREFIX/sbin/$i is missing. Run <init> first."
+	fi
+    done
+
+    # check the vulnerabilities databases and run an audit
+    debug "fetching vulnerabilities and auditing system"
+    pkg_admin fetch-pkg-vulnerabilities
+    pkg_admin audit
 }
 
 # make sure CVS calls to the anonymous NetBSD cvs server will work
 # only when -u is given on command-line
 setup_cvsssh() {
-    check_writable_sw_area
+    get_write_lock || exit 1
+    log "Setting up anoncvs ssh access to anoncvs.netbsd.org"
     if [ update -eq 0 ]; then
-	debug "Skip update from CVS (use -u to trigger update)"
+	log "Skip update from CVS (use -u to trigger update)"
 	return 1
     fi
     debug "setting up .ssh/known_hosts to allow CVS connection to anoncvs.netbsd.org"
@@ -137,62 +195,128 @@ EOF
 	debug "hostkey for anoncvs.netbsd.org added"
     fi
     umask 002
+    log "CVS setup in $HOME/.ssh/known_hosts"
 }
+
 
 cvs_update() {
+    log "Doing CVS update pkgsrc"
     check_installation
     setup_cvsssh
-    debug "doing cvs update in $PKGSRC_LOCATION"
-    (cd  $PKGSRC_LOCATION && CVS_RSH=ssh cvs update -dP )
+    (cd  pkgsrc && CVS_RSH=ssh cvs update -dP )
+    log "CVS update done."
 }
 
+# fetch the pkgsrc tarball if necessary
+get_pkgsrc() {
+    if [ ! -r $PKGSRC_LOCATION/pkgsrc.tar.gz ]; then
+	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is not found, downloading for the first time"
+    elif [ -z `find $PKGSRC_LOCATION/pkgsrc.tar.gz -ctime -30` ]; then
+	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is older than 30 days, fetching new version"
+    else
+	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is found and fresh."
+	ls -l $PKGSRC_LOCATION/pkgsrc.tar.gz
+	log "unpacking tarball in `pwd`"
+	tar xfz $PKGSRC_LOCATION/pkgsrc.tar.gz
+	log "unpacking tarball done."
+	return 0
+    fi
+
+    # fetch from fast mirror
+    log "Fetching pkgsrc.tar.gz from $pkgsrc_url"
+    mkdir -p $PKGSRC_LOCATION
+    wget --no-verbose -O $PKGSRC_LOCATION/pkgsrc.tar.gz $pkgsrc_url
+    if [ $? -ne 0 ]; then
+	error "Fetching pkgsrc.tar.gz from $pkgsrc_url failed." 
+    fi
+    log "$pkgsrc_url saved as $PKGSRC_LOCATION/pkgsrc.tar.gz"
+    log "unpacking tarball in `pwd`"
+    tar xfz $PKGSRC_LOCATION/pkgsrc.tar.gz
+    log "unpacking tarball done."
+}
 
 
 # The command functions. One of these functions will be called from
 # the case...esac switch later on.
 
 do_init() {
-    check_writable_sw_area
+    log "Starting init."
+    get_pkgsrc
 
-    if [ -d $PKGSRC_LOCATION ]; then
-	echo "pkgsrc seems to be already installed"
-	
-	# need to do more checks here?
-	return
-
-    fi
-    # fetch from fast mirror
-    wget -O pkgsrc.tar.gz $pkgsrc_url
-    if [ $? -ne 0 ]; then
-	error "Fetching pkgsrc.tar.gz from $pkgsrc_url failed." 
-    fi
-    tar xCfz $vo_sw_dir pkgsrc.tar.gz
-
+    log "Creating temporary work directory for bootstrapping"
     workdir=`mktemp -d -t pkgsrc-bootstrap.XXXXXXXX`/work
 
     if [ $? -ne 0 ]; then
 	error "failed to create temporary working directory"
     fi
 
-    $PKGSRC_LOCATION/bootstrap/bootstrap --prefix $PKG_PREFIX --unprivileged --workdir $workdir
-
+    log bootstrapping: pkgsrc/bootstrap/bootstrap --prefix $PKG_PREFIX --unprivileged --workdir $workdir
+    pkgsrc/bootstrap/bootstrap --prefix $PKG_PREFIX --unprivileged --workdir $workdir
     if [ $? -ne 0 ]; then
 	error "Bootstrapping pkgsrc failed" 
     fi
 
-    echo "installation OK"
+    log "installation OK. Init is done."
 
 
 }
 
 do_check() {
-
+    log "Starting check"
     echo "================================== Environment ===================================="
     env
     echo "================================= /Environment ===================================="
     echo
+    echo "Our VO: $vo"
+    echo "VO Software area set in variable \$$vo_sw_dir_var = $vo_sw_dir"
+    if [ -z $vo_sw_dir ] ; then
+	echo "\$$vo_sw_dir_var not set. Contact the site administrator."
+	# do we need to go on at all at this point?
+	echo "It's impossible to install pkgsrc at this site until this is fixed."
+	return
+    fi
+    if [ ! -w $vo_sw_dir ] ; then
+	echo "$vo_sw_dir) is not writable, check your proxy (are you the VO software manager?)." 
+	ls -ld $vo_sw_dir
+	echo "I am: "
+	id -a
+    fi
     # test the pkgsrc installation
-    check_installation
+    echo "=============================== Pkgsrc installation ================================"
+    echo "PKGSRC_LOCATION=$PKGSRC_LOCATION"
+    if [ ! -d $PKGSRC_LOCATION ]; then
+	echo "pkgsrc seems not to be installed."
+    elif [ ! -f $PKGSRC_LOCATION/pkgsrc.tar.gz ]; then
+	echo "$PKGSRC_LOCATION/pkgsrc.tar.gz not found"
+    else
+	echo "pkgsrc.tar.gz:"
+	ls -l $PKGSRC_LOCATION/pkgsrc.tar.gz
+    fi
+    echo "PKG_PREFIX=$PKG_PREFIX"
+    if [ ! -d $PKG_PREFIX ]; then
+	echo "$PKG_PREFIX does not exist. Need to bootstrap."
+    else
+	for i in pkg_admin pkg_create pkg_info ; do
+	    filecheck=$PKG_PREFIX/sbin/$i
+	    echo -n "Checking for $filecheck..."
+	    if [ ! -x $filecheck ]; then
+		echo "missing"
+	    else
+		echo OK
+	    fi
+	done
+    fi
+    echo "================================== vulnerabilities =============================="
+
+    # check the vulnerabilities databases and run an audit
+    debug "fetching vulnerabilities and auditing system"
+    pkg_admin fetch-pkg-vulnerabilities
+    echo "================================== /vulnerabilities =============================="
+    echo
+    echo "================================== audit =============================="
+    pkg_admin audit
+    echo "================================== /audit =============================="
+    echo
     echo "================================= Installed packages =============================="
     pkg_info
     echo "================================ /Installed packages =============================="
@@ -201,49 +325,55 @@ do_check() {
 	debug "running lintpkgsrc -i"
 	echo "==================== lintpkgsrc -i ===================="
 	$PKG_PREFIX/bin/lintpkgsrc -i
+	echo "==================== /lintpkgsrc -i ===================="
     else
 	echo "Skipping lintpkgsrc; install pkgtools/lintpkgsrc to include this test"
     fi
+    log "Check done."
     return
 }
 
 do_install() {
-    cvs_update
+    get_pkgsrc
     # install the packages in $@.
     for i in "$@" ; do
-	if [ ! -d $PKGSRC_LOCATION/$i ]; then
+	if [ ! -d pkgsrc/$i ]; then
 	    echo "WARNING: unknown package $i" >&2
 	    continue
 	fi
-	( cd $PKGSRC_LOCATION/$i && bmake install && bmake clean && bmake clean-depends )
+	( cd pkgsrc/$i && bmake install && bmake clean && bmake clean-depends )
     done
 
 }
 
 do_remove() {
-    check_writable_sw_area
     check_installation
     # delete the given packages 
     pkg_delete "$@"
 }
 
 do_update() {
-    cvs_update
+    get_pkgsrc
     for i in "$@" ; do
-	if [ ! -d $PKGSRC_LOCATION/$i ]; then
+	if [ ! -d pkgsrc/$i ]; then
 	    echo "WARNING: unknown package $i" >&2
 	    continue
 	fi
-	( cd $PKGSRC_LOCATION/$i && bmake update && bmake clean && bmake clean-depends )
+	( cd pkgsrc/$i && bmake update && bmake clean && bmake clean-depends )
     done
 
 }
 
 do_version() {
-    cvs_update
-    (cd $PKGSRC_LOCATION && cvs  status -v README)
+    log "version() not implemented."
+    return 0
+    (cd pkgsrc && cvs  status -v README)
 }
 
+
+# all operations need to write to the software area in some way or other, so we
+# might as well try to get the write lock here and get it out of the way
+get_write_lock || exit 1
 
 
 # Parse the command-line arguments. Current understood commands are:
@@ -264,31 +394,16 @@ if [ $# -gt 0 ] ; then
 	update) do_update "$@" ;;
 	version) do_version ;;
 	*)
-	    echo "ERROR: unknown command $1" >&2
-	    printusage
+	    log "ERROR: unknown command given: $1" >&2
+	    printhelp
 	    exit 1
 	    ;;
     esac
     shift
 else
-    echo "No command given."
+    log "No command given. Stop."
     printhelp
     exit 1
 fi
 
-
-
-
-
-
-pkg_admin fetch-pkg-vulnerabilities
-pkg_admin audit
-
-# Any remaining arguments on the commandline are taken as a literal command to execute
-
-if [ $# -ge 1 ]; then
-    echo "executing $@"
-    eval "$@"
-else
-    exit 0
-fi
+log "Script ends."
