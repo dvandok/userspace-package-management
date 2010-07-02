@@ -6,7 +6,8 @@
 umask 002
 
 # This is the location to fetch pkgsrc.tar.gz from. It's a fast mirror.
-pkgsrc_url=ftp://ftp.nl.netbsd.org/pub/NetBSD/packages/pkgsrc.tar.gz
+#pkgsrc_url=ftp://ftp.nl.netbsd.org/pub/NetBSD/packages/pkgsrc.tar.gz
+pkgsrc_url=http://poc.vl-e.nl/distribution/pkgsrc/pkgsrc.tar.gz
 
 
 # bunch stdout and stderr together
@@ -45,6 +46,7 @@ update=0
 vo=
 printhelp=0
 debugging=0
+bmakedebug=
 while getopts udhv: opt; do
     case $opt in
 	u)
@@ -55,7 +57,7 @@ while getopts udhv: opt; do
 	h) printhelp
 	    exit 0;
 	    ;;
-	d) debugging=1 ;;
+	d) debugging=1 ; bmakedebug="-d cmvx" ;;
 	?) printhelp
 	    exit 1;
 	    ;;
@@ -81,7 +83,7 @@ error() {
 }
 
 # infer VO from the proxy if not set
-if [ -n $vo ]; then
+if [ -ze $vo ]; then
     debug "VO not set, looking at proxy"
     vo=`voms-proxy-info -vo`
     if [ $? -ne 0 ]; then
@@ -108,6 +110,9 @@ export PATH PKG_PREFIX PKGSRC_LOCATION
 
 debug "PATH set to: $PATH"
 
+log "Running on host: $HOSTNAME"
+log "command: $0 $@"
+
 # This sanity check makes sure we are allowed to write to the software area.
 # This check should be done before init, install, delete or any other operation
 # that writes data, but not for operations that only read data.
@@ -131,12 +136,12 @@ get_write_lock() {
     if [ -f $lockfile ]; then
 	log "lockfile exists."
 	ls -l $lockfile
-	if [ -z `find $lockfile -cmin -30` ]; then
-	    log "stale lockfile ($lockfile is older than 30 minutes)"
-	    rm -f $lockfile || error "could not remove $lockfile. Call help."
-	else
+	if [ ! -z `find $lockfile -mmin -30 2> /dev/null` ]; then
 	    log "lockfile is still fresh."
 	    return 1
+	else
+	    log "removing stale lockfile (older than 30 minutes)"
+	    rm -f $lockfile
 	fi
     else
 	log "no lockfile found. Setting lock"
@@ -175,43 +180,12 @@ check_installation() {
     pkg_admin audit
 }
 
-# make sure CVS calls to the anonymous NetBSD cvs server will work
-# only when -u is given on command-line
-setup_cvsssh() {
-    get_write_lock || exit 1
-    log "Setting up anoncvs ssh access to anoncvs.netbsd.org"
-    if [ update -eq 0 ]; then
-	log "Skip update from CVS (use -u to trigger update)"
-	return 1
-    fi
-    debug "setting up .ssh/known_hosts to allow CVS connection to anoncvs.netbsd.org"
-    umask 022
-    test -d $HOME/.ssh || mkdir $HOME/.ssh
-    if [ -n `ssh-keygen -F anoncvs.netbsd.org` ] ; then
-	cat >> $HOME/.ssh/known_hosts <<EOF
-# anoncvs.netbsd.org SSH-2.0-OpenSSH_5.0 NetBSD_Secure_Shell-20080403-hpn13v1
-anoncvs.netbsd.org ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEA3QiBl8leG9fqIJpKeNov0PKq5YryFFiroMWOPUv4hDFn8R0jC07YVaR/OSBrr37CTmGX5AFceXPzoFnLlwCqWR7rXg4NR75FTlTp9CG9EBAEtU8mee27KDrUFBTZdfVl2+aRYoAI5fTXA+0vpIO68Cq843vRWUZCcwinS4cNLUU=
-EOF
-	debug "hostkey for anoncvs.netbsd.org added"
-    fi
-    umask 002
-    log "CVS setup in $HOME/.ssh/known_hosts"
-}
-
-
-cvs_update() {
-    log "Doing CVS update pkgsrc"
-    check_installation
-    setup_cvsssh
-    (cd  pkgsrc && CVS_RSH=ssh cvs update -dP )
-    log "CVS update done."
-}
 
 # fetch the pkgsrc tarball if necessary
 get_pkgsrc() {
     if [ ! -r $PKGSRC_LOCATION/pkgsrc.tar.gz ]; then
 	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is not found, downloading for the first time"
-    elif [ -z `find $PKGSRC_LOCATION/pkgsrc.tar.gz -ctime -30` ]; then
+    elif [ -z `find $PKGSRC_LOCATION/pkgsrc.tar.gz -mtime -30` ]; then
 	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is older than 30 days, fetching new version"
     else
 	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is found and fresh."
@@ -233,6 +207,7 @@ get_pkgsrc() {
     log "unpacking tarball in `pwd`"
     tar xfz $PKGSRC_LOCATION/pkgsrc.tar.gz
     log "unpacking tarball done."
+
 }
 
 
@@ -261,12 +236,30 @@ do_init() {
 
 }
 
+# In case you ever feel the need to start over, this operation will trash the entire installation
+# 
+do_clear() {
+    log "Starting Clear"
+    if [ -f $PKGSRC_LOCATION/pkgsrc.tar.gz ]; then
+	log "deleting $PKGSRC_LOCATION/pkgsrc.tar.gz"
+	rm -f $PKGSRC_LOCATION/pkgsrc.tar.gz
+    fi
+    if [ -d $PKG_PREFIX ]; then
+	log "Removing $PKG_PREFIX"
+	rm -rf $PKG_PREFIX/*
+    fi
+    log "Done with Clear"
+}
+
 do_check() {
     log "Starting check"
     echo "================================== Environment ===================================="
     env
     echo "================================= /Environment ===================================="
     echo
+    echo "================================== rpm -qa ===================================="
+    rpm -qa
+    echo "================================= /rpm -qa ===================================="
     echo "Our VO: $vo"
     echo "VO Software area set in variable \$$vo_sw_dir_var = $vo_sw_dir"
     if [ -z $vo_sw_dir ] ; then
@@ -318,7 +311,7 @@ do_check() {
     echo "================================== /audit =============================="
     echo
     echo "================================= Installed packages =============================="
-    pkg_info
+    pkg_info -a
     echo "================================ /Installed packages =============================="
     # if lintpkgsrc is installed, run it.
     if [ -x $PKG_PREFIX/bin/lintpkgsrc ]; then
@@ -341,7 +334,7 @@ do_install() {
 	    echo "WARNING: unknown package $i" >&2
 	    continue
 	fi
-	( cd pkgsrc/$i && bmake install && bmake clean && bmake clean-depends )
+	( cd pkgsrc/$i && bmake ${bmakedebug} install && bmake  clean && bmake clean-depends )
     done
 
 }
@@ -367,7 +360,6 @@ do_update() {
 do_version() {
     log "version() not implemented."
     return 0
-    (cd pkgsrc && cvs  status -v README)
 }
 
 
@@ -388,6 +380,7 @@ get_write_lock || exit 1
 if [ $# -gt 0 ] ; then
     case $1 in
 	init) do_init ;;
+	reinit) do_clear && do_init ;;
 	check) do_check ;;
 	install) shift; do_install "$@" ;;
 	remove) shift; do_remove "$@" ;;
