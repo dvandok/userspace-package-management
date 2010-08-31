@@ -29,3 +29,31 @@
 
    - see to the actual request (install, remove, etc.)
 
+
+** management and reporting
+
+   As a VO software manager you are interested to keep track of all
+   the installed versions of packages on all the available sites. So
+   one level up from the pkgsrc-cmd.sh scripts run in grid jobs is a
+   set of tools to automate the submission of jobs to a known
+   collection of resources, and generating aggregated reports.
+
+   On top of this we could have a service that periodically runs these
+   tools and maintains and serves the generated reports.
+
+
+** Design of get-site-status.sh
+
+   This script will probe sites to find out the status of pkgsrc installations.
+   It will launch pkgsrc-cmd jobs, cycle to wait on the results, and collect
+   the output in a human-readable form.
+
+   Some design principles:
+
+   - the script is meant to be run as a batch job, so it can be used in a crontab file.
+   - the output can be text, html, or otherwise
+   - resources are listed in a data file,
+   - credentials to run the job under are presumed to be available. The user is
+     responsible for keeping credentials up-to-date.
+   - only one job per site should be run at a time; this goes especially for the jobs
+     that install packages as simultaneous writes may result in corruption of the database.

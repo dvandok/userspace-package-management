@@ -1,0 +1,12 @@
+# this file contains a list of managed resources. 
+# data is whitespace-separated, with the following columns:
+# 0: site alias
+# 1: CE endpoint
+# 2: SW prefix (optional)
+# 3: version of pkgsrc (CVS tag)
+# 4: timestamp of last poll
+# 5: timestamp of last update
+SARA 	       ce.gina.sara.nl:2119/jobmanager-lcgpbs-infra
+PHILIPS        deimos.htc.biggrid.nl:2119/jobmanager-pbs-infra
+NIKHEF 	       gazon.nikhef.nl:2119/jobmanager-pbs-short
+RUG 	       ce.grid.rug.nl:2119/jobmanager-pbs-infra

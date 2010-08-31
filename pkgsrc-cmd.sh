@@ -7,7 +7,7 @@ umask 002
 
 # This is the location to fetch pkgsrc.tar.gz from. It's a fast mirror.
 #pkgsrc_url=ftp://ftp.nl.netbsd.org/pub/NetBSD/packages/pkgsrc.tar.gz
-pkgsrc_url=http://poc.vl-e.nl/distribution/pkgsrc/pkgsrc.tar.gz
+pkgsrc_url=http://poc.vl-e.nl/pkgsrc/pkgsrc.tar.gz
 
 
 # bunch stdout and stderr together
@@ -83,7 +83,7 @@ error() {
 }
 
 # infer VO from the proxy if not set
-if [ -ze $vo ]; then
+if [ -z $vo ]; then
     debug "VO not set, looking at proxy"
     vo=`voms-proxy-info -vo`
     if [ $? -ne 0 ]; then
@@ -111,6 +111,7 @@ export PATH PKG_PREFIX PKGSRC_LOCATION
 debug "PATH set to: $PATH"
 
 log "Running on host: $HOSTNAME"
+log "Site name: $SITE_NAME"
 log "command: $0 $@"
 
 # This sanity check makes sure we are allowed to write to the software area.
@@ -231,6 +232,51 @@ do_init() {
 	error "Bootstrapping pkgsrc failed" 
     fi
 
+    # set ALLOW_VULNERABLE_PACKAGES
+    tmpcnf=`mktemp`
+    sed  '/^.endif/ iALLOW_VULNERABLE_PACKAGES=yes' $PKG_PREFIX/etc/mk.conf > $tmpcnf
+    mv $tmpcnf $PKG_PREFIX/etc/mk.conf
+
+    # Make sure that fetching is going to work. The pkgsrc provided tnftp requires
+    # libtermcap-devel, which is not commonly found on systems; although pkgsrc also
+    # provides ncurses, which could work just fine, fetching the ncurses sources requires
+    # tnftp, which means a circular dependency.
+    # So we check if the system has wget installed, which is almost always the case, and
+    # configure pkgsrc to use wget as an alternative method of fetching sources.
+    log "trying to build net/tnftp"
+    ( cd pkgsrc/net/tnftp && bmake ${bmakedebug} install && bmake  clean && bmake clean-depends )
+    if [ $? -ne 0 ] ; then
+	log "failed building net/tnftp."
+	log "trying alternatives."
+	if [ -x /usr/bin/wget ] ; then
+	    log "/usr/bin/wget found. Setting configuration in $PKG_PREFIX/etc/mk.conf"
+	    tmpcnf=`mktemp` || exit "failed to create temporary file"
+	    sed  '/^.endif/ iPREFER_PKGSRC=termcap\
+FETCH_USING= custom\
+FETCH_CMD= /usr/bin/wget\
+FETCH_BEFORE_ARGS= ${PASSIVE_FETCH:D--passive-ftp}\
+FETCH_AFTER_ARGS= # empty\
+FETCH_RESUME_ARGS= -c\
+FETCH_OUTPUT_ARGS= -O' $PKG_PREFIX/etc/mk.conf > $tmpcnf
+	    mv $tmpcnf $PKG_PREFIX/etc/mk.conf
+	elif [ -x /usr/bin/curl ] ; then
+	    log "/usr/bin/curl found. Setting configuration in $PKG_PREFIX/etc/mk.conf"
+	    tmpcnf=`mktemp` || exit "failed to create temporary file"
+	    sed  '/^.endif/ iPREFER_PKGSRC=termcap\
+FETCH_USING= custom\
+FETCH_CMD= /usr/bin/curl
+FETCH_BEFORE_ARGS= ${PASSIVE_FETCH:D--ftp-pasv}
+FETCH_AFTER_ARGS= -O # must be here to honor -o option
+FETCH_RESUME_ARGS= -C -
+FETCH_OUTPUT_ARGS= -o' $PKG_PREFIX/etc/mk.conf > $tmpcnf
+	    mv $tmpcnf $PKG_PREFIX/etc/mk.conf
+	else
+	    exit "could not find wget or curl, giving up"
+	fi
+    else
+	log "building net/tnftp succeeded"
+    fi
+
     log "installation OK. Init is done."
 
 
@@ -252,16 +298,21 @@ do_clear() {
 }
 
 do_check() {
-    log "Starting check"
-    echo "================================== Environment ===================================="
-    env
-    echo "================================= /Environment ===================================="
-    echo
-    echo "================================== rpm -qa ===================================="
-    rpm -qa
-    echo "================================= /rpm -qa ===================================="
-    echo "Our VO: $vo"
-    echo "VO Software area set in variable \$$vo_sw_dir_var = $vo_sw_dir"
+    log "Starting check; output goes to status.txt"
+    exec 3> status.txt
+    {
+	echo "Site: $SITE_NAME"
+	echo
+	echo "Environment:"
+	env
+	echo
+	echo "Installed RPMS:"
+	rpm -qa
+	echo 
+	echo "Our VO: $vo"
+	echo "VO Software area set in variable \$$vo_sw_dir_var = $vo_sw_dir"
+    } >&3
+
     if [ -z $vo_sw_dir ] ; then
 	echo "\$$vo_sw_dir_var not set. Contact the site administrator."
 	# do we need to go on at all at this point?
@@ -275,17 +326,18 @@ do_check() {
 	id -a
     fi
     # test the pkgsrc installation
-    echo "=============================== Pkgsrc installation ================================"
-    echo "PKGSRC_LOCATION=$PKGSRC_LOCATION"
+    echo >&3
+    echo "Pkgsrc installation" >&3
+    echo "PKGSRC_LOCATION=$PKGSRC_LOCATION" >&3
     if [ ! -d $PKGSRC_LOCATION ]; then
 	echo "pkgsrc seems not to be installed."
     elif [ ! -f $PKGSRC_LOCATION/pkgsrc.tar.gz ]; then
 	echo "$PKGSRC_LOCATION/pkgsrc.tar.gz not found"
     else
-	echo "pkgsrc.tar.gz:"
-	ls -l $PKGSRC_LOCATION/pkgsrc.tar.gz
+	echo "pkgsrc.tar.gz:" >&3
+	ls -l $PKGSRC_LOCATION/pkgsrc.tar.gz >&3
     fi
-    echo "PKG_PREFIX=$PKG_PREFIX"
+    echo "PKG_PREFIX=$PKG_PREFIX" >&3
     if [ ! -d $PKG_PREFIX ]; then
 	echo "$PKG_PREFIX does not exist. Need to bootstrap."
     else
@@ -299,28 +351,35 @@ do_check() {
 	    fi
 	done
     fi
-    echo "================================== vulnerabilities =============================="
+    echo "Configuration: $PKG_PREFIX/etc/mk.conf" >&3
+    cat $PKG_PREFIX/etc/mk.conf >&3
+
+    echo "End of Configuration file" >&3
 
     # check the vulnerabilities databases and run an audit
-    debug "fetching vulnerabilities and auditing system"
+    log "fetching vulnerabilities and auditing system"
     pkg_admin fetch-pkg-vulnerabilities
-    echo "================================== /vulnerabilities =============================="
-    echo
-    echo "================================== audit =============================="
-    pkg_admin audit
-    echo "================================== /audit =============================="
-    echo
-    echo "================================= Installed packages =============================="
-    pkg_info -a
-    echo "================================ /Installed packages =============================="
+    {
+	echo "Audit:"
+	pkg_admin audit
+	echo "End audit:"
+	echo
+	echo "Installed packages:"
+	pkg_info -a
+	echo "End of installed packages"
+    } >&3
+
     # if lintpkgsrc is installed, run it.
     if [ -x $PKG_PREFIX/bin/lintpkgsrc ]; then
 	debug "running lintpkgsrc -i"
-	echo "==================== lintpkgsrc -i ===================="
-	$PKG_PREFIX/bin/lintpkgsrc -i
-	echo "==================== /lintpkgsrc -i ===================="
+	{
+	    echo "lintpkgsrc -i"
+	    $PKG_PREFIX/bin/lintpkgsrc -i
+	    echo "end of lintpkgsrc"
+	    echo
+	} >&3
     else
-	echo "Skipping lintpkgsrc; install pkgtools/lintpkgsrc to include this test"
+	log "Skipping lintpkgsrc; install pkgtools/lintpkgsrc to include this test"
     fi
     log "Check done."
     return
@@ -335,6 +394,9 @@ do_install() {
 	    continue
 	fi
 	( cd pkgsrc/$i && bmake ${bmakedebug} install && bmake  clean && bmake clean-depends )
+	if [ $? -ne 0 ] ; then
+	    error "bmake failed on $i"
+	fi
     done
 
 }
