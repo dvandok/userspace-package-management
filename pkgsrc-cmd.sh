@@ -1,4 +1,8 @@
 #!/bin/sh
+#
+# This script runs on the worker node
+#
+
 
 # The umask setting makes everything we do group writable, which is a requirement for stuff
 # we leave in the VO software area. If we didn't, only the original user would be able to
