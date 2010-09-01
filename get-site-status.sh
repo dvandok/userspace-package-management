@@ -1,7 +1,7 @@
 #!/bin/bash
-
-# FIXMELATER
-delegation=dennis
+#
+# This is a management script run on a glite enabled ui
+#
 
 mopup=0
 
@@ -30,7 +30,7 @@ sites=`awk ' $1 !~ /^#/ { print $1 }' resources.dat`
 pids=
 for i in $sites ; do
     # create a work directory
-    workdir=$i
+    workdir="sites/$i"
     if [ ! -d $workdir ]; then
 	mkdir $workdir
     fi
@@ -50,8 +50,8 @@ EOF
 	if grep ^https jids ; then
 	    echo "DEBUG: jids file already has jobs, skipping $i"
 	else
-	    echo "DEBUG: glite-wms-job-submit -d $delegation -o jids -r $endpoint $jobfile"
-	    glite-wms-job-submit -d $delegation -o jids -r $endpoint $jobfile
+	    echo "DEBUG: glite-wms-job-submit -d $USER -o jids -r $endpoint $jobfile"
+	    glite-wms-job-submit -d $USER -o jids -r $endpoint $jobfile
 	    if [ $? -ne 0 ]; then
 		echo "Error: Failed to submit job to $i" >&2
 	    fi
