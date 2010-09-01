@@ -6,7 +6,13 @@
 # 3: version of pkgsrc (CVS tag)
 # 4: timestamp of last poll
 # 5: timestamp of last update
-SARA 	       ce.gina.sara.nl:2119/jobmanager-lcgpbs-infra
-PHILIPS        deimos.htc.biggrid.nl:2119/jobmanager-pbs-infra
-NIKHEF 	       gazon.nikhef.nl:2119/jobmanager-pbs-short
-RUG 	       ce.grid.rug.nl:2119/jobmanager-pbs-infra
+SARA 	       ce.gina.sara.nl:2119/jobmanager-lcgpbs-medium
+PHILIPS        deimos.htc.biggrid.nl:2119/jobmanager-pbs-medium
+NIKHEF 	       gazon.nikhef.nl:2119/jobmanager-pbs-medium
+RUG 	       ce.grid.rug.nl:2119/jobmanager-pbs-medium
+AMC            gb-ce-amc.amc.nl:8443/cream-pbs-medium
+KUN            gb-ce-kun.els.sara.nl:8443/cream-pbs-medium
+LUMC           gb-ce-lumc.lumc.nl:8443/cream-pbs-medium
+NKI            gb-ce-nki.els.sara.nl:8443/cream-pbs-medium
+UU             gb-ce-uu.science.uu.nl:8443/cream-pbs-medium
+WUR            gb-ce-wur.els.sara.nl:8443/cream-pbs-medium
