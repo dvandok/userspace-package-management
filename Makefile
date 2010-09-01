@@ -11,3 +11,6 @@ sync:
 
 dist:
 	tar cfz $(package) $(files-to-package)
+
+perms:
+	chmod +x *.sh
