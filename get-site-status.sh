@@ -35,15 +35,15 @@ for i in $sites ; do
 	mkdir $workdir
     fi
     ( cd $workdir
-	endpoint=`awk '$1 == "'$i'" { print $2 }' ../resources.dat`
-	jobfile=pkgsrc-status.jdl
+	endpoint=`awk '$1 == "'$i'" { print $2 }' ../../resources.dat`
+	jobfile=../../pkgsrc-status.jdl
 	if [ ! -r $jobfile ]; then
 	    cat > $jobfile <<EOF
 Executable = "pkgsrc-cmd.sh";
 Arguments = "-d check";
 Stdoutput = "stdout";
 StdError = "stderror";
-InputSandbox = "../pkgsrc-cmd.sh";
+InputSandbox = "../../pkgsrc-cmd.sh";
 OutputSandbox = {"stdout","status.txt"};
 EOF
 	fi
@@ -102,7 +102,7 @@ waitlonger=1
 while [ $waitlonger -eq 1 ]; do
     waitlonger=0
     for i in $sites ; do
-	    cd $i
+	    cd sites/$i
 	    if test -f jids && grep -q '^https:' jids; then
 		jobs=`grep -v '^#' jids`
 		for j in $jobs ; do
@@ -134,7 +134,7 @@ while [ $waitlonger -eq 1 ]; do
 		    esac
 		done
 	    fi
-	    cd ..
+	    cd ../..
     done
     sleep 10
 done
