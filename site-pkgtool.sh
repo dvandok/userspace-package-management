@@ -8,7 +8,7 @@
 #
 function usage {
 	echo "Usage: $0 <site> <install | remove | update> [ package ... ]" > /dev/stderr
-	echo "       $0 <site> <init | reinit | check | version>" > /dev/stderr
+	echo "       $0 <site> <init | reinit | check | dump | info | version>" > /dev/stderr
 }
 
 JIDS=site-pkgtool.jids
@@ -21,17 +21,17 @@ if [ -z "$site" ]; then
 	exit 1
 fi
 
-resource=`awk '$1=="'$site'" { print $2 }' resources.dat`
+resource=`awk '$1=="'$site'" { print $2 }' etc/resources.dat`
 
 if [ -z "$resource" ]; then
-	echo "Site '$site' not found in resources.dat." > /dev/stderr
+	echo "Site '$site' not found in etc/resources.dat." > /dev/stderr
 	usage
 	exit 1
 fi
 
 if [ $# -gt 0 ]; then
     case $1 in
-        init | reinit | check | version)
+        init | reinit | check | dump | info | version)
 		command=$1
     		shift
 		if [ $# -gt 0 ]; then
