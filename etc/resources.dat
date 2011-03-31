@@ -1,0 +1,23 @@
+# this file contains a list of managed resources. 
+# data is whitespace-separated, with the following columns:
+# 0: site alias
+# 1: CE endpoint
+# 2: SW prefix (optional)
+# 3: version of pkgsrc (CVS tag)
+# 4: timestamp of last poll
+# 5: timestamp of last update
+HTC-BIGGRID     phoebe.htc.biggrid.nl:8443/cream-pbs-short
+LSG-AMC         gb-ce-amc.amc.nl:8443/cream-pbs-medium
+LSG-AMS		gb-ce-ams.els.sara.nl:8443/cream-pbs-medium
+LSG-EMC		gb-ce-emc.erasmusmc.nl:8443/cream-pbs-medium
+LSG-KG		gb-ce-kg.keygene.com:8443/cream-pbs-medium
+LSG-KUN         gb-ce-kun.els.sara.nl:8443/cream-pbs-medium
+LSG-LUMC        gb-ce-lumc.lumc.nl:8443/cream-pbs-medium
+LSG-NKI         gb-ce-nki.els.sara.nl:8443/cream-pbs-medium
+LSG-RUG		gb-ce-rug.sara.usor.nl:8443/cream-pbs-medium
+LSG-TUD		gb-ce-tud.ewi.tudelft.nl:8443/cream-pbs-medium
+LSG-UU          gb-ce-uu.science.uu.nl:8443/cream-pbs-medium
+LSG-WUR         gb-ce-wur.els.sara.nl:8443/cream-pbs-medium
+NIKHEF-ELPROD   juk.nikhef.nl:8443/cream-pbs-short
+RUG-CIT         creamce.grid.rug.nl:8443/cream-pbs-short
+SARA-MATRIX     creamce.gina.sara.nl:8443/cream-pbs-short
