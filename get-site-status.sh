@@ -3,12 +3,12 @@
 # This is a management script run on a glite enabled ui
 #
 
-mopup=0
+nosubmit=0
 
-while getopts m opt; do
+while getopts n opt; do
     case $opt in
-	m)
-	    mopup=1
+	n)
+	    nosubmit=1
 	    ;;
 	?)
 	    echo "ERROR: unknown option $opt."
@@ -20,12 +20,12 @@ shift $(($OPTIND - 1))
 
 # look up the resources in the data file
 
-if [ ! -r resources.dat ] ; then
-    echo "ERROR: Missing resource datafile resources.dat" >&2
+if [ ! -r etc/resources.dat ] ; then
+    echo "ERROR: Missing resource datafile etc/resources.dat" >&2
     exit 1
 fi
 
-sites=`awk ' $1 !~ /^#/ { print $1 }' resources.dat`
+sites=`awk ' $1 !~ /^#/ { print $1 }' etc/resources.dat`
 
 pids=
 for i in $sites ; do
@@ -35,20 +35,12 @@ for i in $sites ; do
 	mkdir $workdir
     fi
     ( cd $workdir
-	endpoint=`awk '$1 == "'$i'" { print $2 }' ../../resources.dat`
-	jobfile=../../pkgsrc-status.jdl
-	if [ ! -r $jobfile ]; then
-	    cat > $jobfile <<EOF
-Executable = "pkgsrc-cmd.sh";
-Arguments = "-d check";
-Stdoutput = "stdout";
-StdError = "stderror";
-InputSandbox = "../../pkgsrc-cmd.sh";
-OutputSandbox = {"stdout","status.txt"};
-EOF
-	fi
-	if grep ^https jids ; then
+	endpoint=`awk '$1 == "'$i'" { print $2 }' ../../etc/resources.dat`
+	jobfile=../../etc/pkgsrc-status.jdl
+	if test -f jids && grep ^https jids ; then
 	    echo "DEBUG: jids file already has jobs, skipping $i"
+	elif [ $nosubmit -eq 1 ]; then
+	    echo "DEBUG: No new submissions"
 	else
 	    echo "DEBUG: glite-wms-job-submit -d $USER -o jids -r $endpoint $jobfile"
 	    glite-wms-job-submit -d $USER -o jids -r $endpoint $jobfile
@@ -73,8 +65,11 @@ done
 # $1 is job id
 get_job_output() {
     jobhash=`echo $1 | sed -e 's,.*/,,'`
+    echo "jobhash in get_job_output: $jobhash"
 
-#    mkdir $jobdir || die "can't mkdir $jobdir"
+    echo "pwd: $PWD"
+
+    #mkdir $jobhash || die "can't mkdir $jobhash"
     glite-wms-job-output --noint --nosubdir --logfile $jobhash.log --dir $jobhash $1
     if [ $? -ne 0 ] ; then
 	echo "failed to get job output for $1" >&2
@@ -84,7 +79,7 @@ get_job_output() {
     # just append
     cat $jobhash/status.txt >> status
     cat $jobhash/stdout >> job.log
-    rm -rf $jobhash
+    #rm -rf $jobhash
 }
 
 # $1 = jobid $2 = state
@@ -102,11 +97,13 @@ waitlonger=1
 while [ $waitlonger -eq 1 ]; do
     waitlonger=0
     for i in $sites ; do
+	    echo "Site: $i"
 	    cd sites/$i
 	    if test -f jids && grep -q '^https:' jids; then
 		jobs=`grep -v '^#' jids`
 		for j in $jobs ; do
 		    jobhash=`echo $j | sed -e 's,.*/,,'`
+		    #echo "jobhash in loop: $jobhash"
 		    rm -f jobstate
 		    glite-wms-job-status --noint --logfile joblog -o jobstate $j > /dev/null 2>&1
 		    if [ $? -ne 0 ]; then
@@ -115,6 +112,7 @@ while [ $waitlonger -eq 1 ]; do
 		    fi
                     # grep the status file for "Current Status"
 		    state=`sed -n -e '/Current Status/  s/.*:\s*// p' jobstate`
+		    echo "state: $state"
 		    case $state in
 			"Done"* )
 			# job is done, get the output
@@ -136,6 +134,7 @@ while [ $waitlonger -eq 1 ]; do
 	    fi
 	    cd ../..
     done
+    echo "sleep"
     sleep 10
 done
 
