@@ -112,7 +112,7 @@ debug "VO software area looked for in environment variable: $vo_sw_dir_var"
 debug "set vo_sw_dir to $vo_sw_dir"
 
 PKGSRC_LOCATION=$vo_sw_dir/pkgsrc
-MODULEFILES_LOCATION=$vo_sw_dir/modulefiles
+MODULEFILES_LOCATION=$vo_sw_dir/modules
 PKG_PREFIX=$vo_sw_dir/pkg
 PATH=$PKG_PREFIX/bin:$PKG_PREFIX/sbin:$PATH
 export PATH PKG_PREFIX PKGSRC_LOCATION
