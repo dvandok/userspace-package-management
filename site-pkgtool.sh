@@ -13,6 +13,14 @@ function usage {
 
 JIDS=site-pkgtool.jids
 
+
+# Check if a VO manager proxy is available
+if ! voms-proxy-info --all|grep -q Role=sgm ; then
+	echo "No VO manager proxy!"
+	exit 1
+fi
+
+# Check for Site
 site=$1
 shift
 
@@ -20,6 +28,7 @@ if [ -z "$site" ]; then
 	usage
 	exit 1
 fi
+
 
 resource=`awk '$1=="'$site'" { print $2 }' etc/resources.dat`
 
