@@ -9,9 +9,10 @@
 # modify or remove these files.
 umask 002
 
-# This is the location to fetch pkgsrc.tar.gz from. It's a fast mirror.
+# This is the location to fetch pkgsrc.tar.gz from.
 #pkgsrc_url=ftp://ftp.nl.netbsd.org/pub/NetBSD/packages/pkgsrc.tar.gz
-pkgsrc_url=http://poc.vl-e.nl/pkgsrc/pkgsrc.tar.gz
+#pkgsrc_url=http://poc.vl-e.nl/pkgsrc/pkgsrc.tar.gz
+pkgsrc_url=http://orange.ebioscience.amc.nl/pkgsrc/pkgsrc.tar.gz
 
 
 # bunch stdout and stderr together
@@ -38,7 +39,9 @@ Commands:
    install [ pkg ... ] Install the given packages
     remove [ pkg ... ] Remove the given packages
     update [ pkg ... ] Update the given packages
-   version  print version information
+   version  Print version information
+      info  List installed packages
+      dump  List all content of shared area
 
 EOF
 
@@ -51,6 +54,7 @@ vo=
 printhelp=0
 debugging=0
 bmakedebug=
+#bmakedebug="-d cmvx"
 while getopts udhv: opt; do
     case $opt in
 	u)
@@ -108,6 +112,7 @@ debug "VO software area looked for in environment variable: $vo_sw_dir_var"
 debug "set vo_sw_dir to $vo_sw_dir"
 
 PKGSRC_LOCATION=$vo_sw_dir/pkgsrc
+MODULEFILES_LOCATION=$vo_sw_dir/modulefiles
 PKG_PREFIX=$vo_sw_dir/pkg
 PATH=$PKG_PREFIX/bin:$PKG_PREFIX/sbin:$PATH
 export PATH PKG_PREFIX PKGSRC_LOCATION
@@ -222,6 +227,9 @@ get_pkgsrc() {
 do_init() {
     log "Starting init."
     get_pkgsrc
+ 
+    # Create the directory to store the modulefiles
+    mkdir -p $MODULEFILES_LOCATION
 
     log "Creating temporary work directory for bootstrapping"
     workdir=`mktemp -d -t pkgsrc-bootstrap.XXXXXXXX`/work
@@ -241,6 +249,11 @@ do_init() {
     sed  '/^.endif/ iALLOW_VULNERABLE_PACKAGES=yes' $PKG_PREFIX/etc/mk.conf > $tmpcnf
     mv $tmpcnf $PKG_PREFIX/etc/mk.conf
 
+    # Use X11 from pkgsrc
+    tmpcnf=`mktemp`
+    sed  '/^.endif/ iX11_TYPE=modular' $PKG_PREFIX/etc/mk.conf > $tmpcnf
+    mv $tmpcnf $PKG_PREFIX/etc/mk.conf
+
     # Make sure that fetching is going to work. The pkgsrc provided tnftp requires
     # libtermcap-devel, which is not commonly found on systems; although pkgsrc also
     # provides ncurses, which could work just fine, fetching the ncurses sources requires
@@ -248,7 +261,7 @@ do_init() {
     # So we check if the system has wget installed, which is almost always the case, and
     # configure pkgsrc to use wget as an alternative method of fetching sources.
     log "trying to build net/tnftp"
-    ( cd pkgsrc/net/tnftp && bmake ${bmakedebug} install && bmake  clean && bmake clean-depends )
+    ( cd pkgsrc/net/tnftp && bmake ${bmakedebug} install && bmake clean && bmake clean-depends )
     if [ $? -ne 0 ] ; then
 	log "failed building net/tnftp."
 	log "trying alternatives."
@@ -393,11 +406,12 @@ do_install() {
     get_pkgsrc
     # install the packages in $@.
     for i in "$@" ; do
+	echo "Going to install $i"
 	if [ ! -d pkgsrc/$i ]; then
 	    echo "WARNING: unknown package $i" >&2
 	    continue
 	fi
-	( cd pkgsrc/$i && bmake ${bmakedebug} install && bmake  clean && bmake clean-depends )
+	( cd pkgsrc/$i && bmake ${bmakedebug} install && bmake clean && bmake clean-depends )
 	if [ $? -ne 0 ] ; then
 	    error "bmake failed on $i"
 	fi
@@ -421,6 +435,15 @@ do_update() {
 	( cd pkgsrc/$i && bmake update && bmake clean && bmake clean-depends )
     done
 
+}
+
+do_dump() {
+	find $vo_sw_dir
+}
+
+do_info() {
+    check_installation
+    pkg_info
 }
 
 do_version() {
@@ -450,8 +473,10 @@ if [ $# -gt 0 ] ; then
 	check) do_check ;;
 	install) shift; do_install "$@" ;;
 	remove) shift; do_remove "$@" ;;
-	update) do_update "$@" ;;
+	update) shift; do_update "$@" ;;
 	version) do_version ;;
+	info) do_info ;;
+	dump) do_dump ;;
 	*)
 	    log "ERROR: unknown command given: $1" >&2
 	    printhelp
