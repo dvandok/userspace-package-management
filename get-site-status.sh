@@ -65,9 +65,9 @@ done
 # $1 is job id
 get_job_output() {
     jobhash=`echo $1 | sed -e 's,.*/,,'`
-    echo "jobhash in get_job_output: $jobhash"
+    #echo "jobhash in get_job_output: $jobhash"
 
-    echo "pwd: $PWD"
+    #echo "pwd: $PWD"
 
     #mkdir $jobhash || die "can't mkdir $jobhash"
     glite-wms-job-output --noint --nosubdir --logfile $jobhash.log --dir $jobhash $1
@@ -76,8 +76,8 @@ get_job_output() {
 	echo "job output retrieval failure" >&3
 	return 1
     fi
+    cat $jobhash/status.txt > status
     # just append
-    cat $jobhash/status.txt >> status
     cat $jobhash/stdout >> job.log
     #rm -rf $jobhash
 }
@@ -134,7 +134,7 @@ while [ $waitlonger -eq 1 ]; do
 	    fi
 	    cd ../..
     done
-    echo "sleep"
+    echo "Waiting ..."
     sleep 10
 done
 
