@@ -9,11 +9,15 @@
 # modify or remove these files.
 umask 002
 
-# This is the location to fetch pkgsrc.tar.gz from.
+# This is the location to fetch pkgsrc.tar.gz from. It can be overriden by
+# using -u {url} on the command-line.
 #pkgsrc_url=ftp://ftp.nl.netbsd.org/pub/NetBSD/packages/pkgsrc.tar.gz
 #pkgsrc_url=http://poc.vl-e.nl/pkgsrc/pkgsrc.tar.gz
 pkgsrc_url=http://orange.ebioscience.amc.nl/pkgsrc/pkgsrc.tar.gz
 
+# This variable specifies for how long we consider a lockfile to be 'fresh',
+# in minutes.
+lockfreshness=30
 
 # bunch stdout and stderr together
 exec 2>&1
@@ -25,13 +29,14 @@ exec 2>&1
 
 printhelp() {
     cat <<EOF 
-usage: pkgsrc-cmd.sh [-u] [-v vo] [-h] <command> [arguments]
+usage: pkgsrc-cmd.sh [-u url] [-v vo] [-h] <command> [arguments]
 
 Options:
-	-u  force update of the pkgsrc installation
+	-u  override default URL of pkgsrc.tar.gz
 	-v  explicitly set VO (use if not recognised automatically)
 	-h  print this help
         -d  print debug output
+        -l  run locally (cuts corners for local debugging)
 
 Commands:
       init  Set up pkgsrc for the first time
@@ -47,18 +52,33 @@ EOF
 
 }
 
-# should we update pkgsrc itself?
-update=0
-# what is the VO?
+
+# The name of the Virtual Organisation (VO). The persistent software
+# area is referenced by an environment variable named after the VO.
+# In grid jobs this information is derived from the user's proxy.
+# For debugging and testing this may be given with -v on the command line.
 vo=
-printhelp=0
+
+# Turn on debugging with -d. This will produce lots of diagnostic output.
 debugging=0
-bmakedebug=
+
+# The debugging flags to pass to bmake. These are set
+# when the -d option is given. See 'man bmake' for a list
+# of flags.
 #bmakedebug="-d cmvx"
-while getopts udhv: opt; do
+bmakedebug=
+
+# runlocal (specified with -l) is a flag that tells pkgsrc-cmd 
+# that it is not being run as part of a grid job, but locally
+# (probably for testing and debugging). There is a slight
+# advantage because it doesn't need to unpack the pkgsrc.tar.gz
+# every time (in batch jobs it cannot be assumed to persist).
+runlocal=0
+
+while getopts u:dlhv: opt; do
     case $opt in
 	u)
-	    update=1
+	    pkgsrc_url=$OPTARG
 	    ;;
 	v) vo=$OPTARG
 	    ;;
@@ -66,6 +86,9 @@ while getopts udhv: opt; do
 	    exit 0;
 	    ;;
 	d) debugging=1 ; bmakedebug="-d cmvx" ;;
+	l) 
+	    runlocal=1
+	    ;;
 	?) printhelp
 	    exit 1;
 	    ;;
@@ -146,7 +169,7 @@ get_write_lock() {
     if [ -f $lockfile ]; then
 	log "lockfile exists."
 	ls -l $lockfile
-	if [ ! -z `find $lockfile -mmin -30 2> /dev/null` ]; then
+	if [ ! -z `find $lockfile -mmin -$lockfreshness 2> /dev/null` ]; then
 	    log "lockfile is still fresh."
 	    return 1
 	else
