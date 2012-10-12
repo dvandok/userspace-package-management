@@ -1,3 +1,4 @@
+# Emacs uses -*- org -*- mode
 * User space package management
 
   The PoC (Proof of Concept / Packages of Choice) has always been a centrally provided collection of

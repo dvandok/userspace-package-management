@@ -1,8 +1,14 @@
 #!/bin/sh
 #
-# This script runs on the worker node
+# This script runs on the worker node.
+# To run it locally (e.g. for testing) use -l
 #
 
+# Set locale to C because the gcc version detection system is broken.
+# See http://mail-index.netbsd.org/pkgsrc-users/2012/07/16/msg016728.html
+
+LC_ALL=C
+export LC_ALL
 
 # The umask setting makes everything we do group writable, which is a requirement for stuff
 # we leave in the VO software area. If we didn't, only the original user would be able to
@@ -32,11 +38,11 @@ printhelp() {
 usage: pkgsrc-cmd.sh [-u url] [-v vo] [-h] <command> [arguments]
 
 Options:
-	-u  override default URL of pkgsrc.tar.gz
-	-v  explicitly set VO (use if not recognised automatically)
-	-h  print this help
-        -d  print debug output
-        -l  run locally (cuts corners for local debugging)
+    -u           override default URL of pkgsrc.tar.gz
+    -v           explicitly set VO (use if not recognised automatically)
+    -h           print this help
+    -d           print debug output
+    -l [prefix]  run locally (cuts corners for local debugging)
 
 Commands:
       init  Set up pkgsrc for the first time
@@ -75,7 +81,7 @@ bmakedebug=
 # every time (in batch jobs it cannot be assumed to persist).
 runlocal=0
 
-while getopts u:dlhv: opt; do
+while getopts u:dl:hv: opt; do
     case $opt in
 	u)
 	    pkgsrc_url=$OPTARG
@@ -86,9 +92,7 @@ while getopts u:dlhv: opt; do
 	    exit 0;
 	    ;;
 	d) debugging=1 ; bmakedebug="-d cmvx" ;;
-	l) 
-	    runlocal=1
-	    ;;
+	l) runlocal=1 ; localprefix=$OPTARG ;;
 	?) printhelp
 	    exit 1;
 	    ;;
@@ -113,26 +117,34 @@ error() {
     exit 1
 }
 
-# infer VO from the proxy if not set
-if [ -z $vo ]; then
-    debug "VO not set, looking at proxy"
-    vo=`voms-proxy-info -vo`
-    if [ $? -ne 0 ]; then
-	error "Could not get VO with voms-proxy-info; try -v <vo>."
-    fi
-    debug "VO set from proxy: '$vo'"
-else
-    debug "VO set on command line: '$vo'"
-fi
+if [ $runlocal -eq 1 ]; then
 
-log "Started pkgsrc-cmd.sh. VO=$vo, debugging=$debugging"
+    vo_sw_dir=$localprefix
+
+else
+
+# infer VO from the proxy if not set
+    if [ -z $vo ]; then
+	debug "VO not set, looking at proxy"
+	vo=`voms-proxy-info -vo`
+	if [ $? -ne 0 ]; then
+	    error "Could not get VO with voms-proxy-info; try -v <vo>."
+	fi
+	debug "VO set from proxy: '$vo'"
+    else
+	debug "VO set on command line: '$vo'"
+    fi
+
+    log "Started pkgsrc-cmd.sh. VO=$vo, debugging=$debugging"
 
 # We need an indirection to set the directory of the VO specific software area
-vo_sw_dir_var=VO_`echo $vo | tr a-z. A-Z.`_SW_DIR
-eval vo_sw_dir=\$$vo_sw_dir_var
+    vo_sw_dir_var=VO_`echo $vo | tr a-z. A-Z.`_SW_DIR
+    eval vo_sw_dir=\$$vo_sw_dir_var
 
-debug "VO software area looked for in environment variable: $vo_sw_dir_var"
-debug "set vo_sw_dir to $vo_sw_dir"
+    debug "VO software area looked for in environment variable: $vo_sw_dir_var"
+    debug "set vo_sw_dir to $vo_sw_dir"
+
+fi
 
 PKGSRC_LOCATION=$vo_sw_dir/pkgsrc
 MODULEFILES_LOCATION=$vo_sw_dir/modules
@@ -216,17 +228,32 @@ check_installation() {
 
 # fetch the pkgsrc tarball if necessary
 get_pkgsrc() {
+    if [ $runlocal -eq 1 ]; then
+	log "RUNLOCAL: Not fetching pkgsrc.tar.gz"
+	return 0
+    fi
     if [ ! -r $PKGSRC_LOCATION/pkgsrc.tar.gz ]; then
 	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is not found, downloading for the first time"
-    elif [ -z `find $PKGSRC_LOCATION/pkgsrc.tar.gz -mtime -30` ]; then
-	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is older than 30 days, fetching new version"
     else
-	log "$PKGSRC_LOCATION/pkgsrc.tar.gz is found and fresh."
-	ls -l $PKGSRC_LOCATION/pkgsrc.tar.gz
-	log "unpacking tarball in `pwd`"
-	tar xfz $PKGSRC_LOCATION/pkgsrc.tar.gz
-	log "unpacking tarball done."
-	return 0
+	# This is dirty; HEAD is in the libperl-www package. FIXME.
+	avail=`HEAD $pkgsrc_url | grep '^Last-Modified:' | cut -d' ' -f2-`
+	availepoch=`date -d "$avail" '+%s'`
+	# FIXME the stat utility is in coreutils, can we assume it works?
+	haveepoch=`stat -c '%Y' $PKGSRC_LOCATION/pkgsrc.tar.gz`
+	if [ "$haveepoch" -lt "$availepoch" ]; then
+	    log "$PKGSRC_LOCATION/pkgsrc.tar.gz is older than $avail, fetching new version"
+	else
+	    log "$PKGSRC_LOCATION/pkgsrc.tar.gz is found and fresh."
+	    ls -l $PKGSRC_LOCATION/pkgsrc.tar.gz
+	    if [ $runlocal -eq 1 ]; then
+		log "Not unpacking (running locally)"
+	    else
+		log "unpacking tarball in `pwd`"
+		tar xfz $PKGSRC_LOCATION/pkgsrc.tar.gz
+		log "unpacking tarball done."
+	    fi
+	    return 0
+	fi
     fi
 
     # fetch from fast mirror
